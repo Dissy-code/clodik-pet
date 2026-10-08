@@ -1,8 +1,11 @@
-const { app, BrowserWindow, Menu, ipcMain, screen, powerMonitor } = require('electron');
+const { app, BrowserWindow, Menu, ipcMain, screen, powerMonitor, dialog } = require('electron');
 const path = require('path');
 const fs = require('fs');
+const AdmZip = require('adm-zip');
 
 const STATE_PATH = path.join(app.getPath('userData'), 'settings.json');
+const PACKS_DIR = path.join(app.getPath('userData'), 'packs');
+const FRAME_NAMES = ['base', 'blink', 'tired', 'legs_a', 'legs_b'];
 
 const DEFAULTS = {
   breakIdleSec: 180,
@@ -15,6 +18,7 @@ const DEFAULTS = {
   hunger: 100,
   happiness: 100,
   lastTickAt: Date.now(),
+  activePack: 'default',
 };
 
 const HUNGER_FULL_DECAY_MS = 8 * 60 * 60 * 1000;
@@ -130,6 +134,77 @@ function daysSince(ts) {
   return Math.max(0, Math.floor((Date.now() - ts) / (24 * 60 * 60 * 1000)));
 }
 
+const BUILTIN_PACKS = {
+  blue: 'Синий',
+  green: 'Зелёный',
+  purple: 'Фиолетовый',
+};
+
+function getSpritesPath() {
+  if (settings.activePack === 'default') return path.join(__dirname, 'assets');
+  if (BUILTIN_PACKS[settings.activePack]) return path.join(__dirname, 'builtin-packs', settings.activePack);
+  const dir = path.join(PACKS_DIR, settings.activePack);
+  const hasAllFrames = FRAME_NAMES.every(n => fs.existsSync(path.join(dir, `${n}.png`)));
+  return hasAllFrames ? dir : path.join(__dirname, 'assets');
+}
+
+function listPacks() {
+  try {
+    return fs.readdirSync(PACKS_DIR).filter(name => {
+      const dir = path.join(PACKS_DIR, name);
+      return fs.statSync(dir).isDirectory() && FRAME_NAMES.every(n => fs.existsSync(path.join(dir, `${n}.png`)));
+    });
+  } catch {
+    return [];
+  }
+}
+
+function importPack() {
+  const result = dialog.showOpenDialogSync(win, {
+    title: 'Выбери текстурпак (.zip)',
+    properties: ['openFile'],
+    filters: [{ name: 'Текстурпак', extensions: ['zip'] }]
+  });
+  if (!result || !result[0]) return;
+  const zipPath = result[0];
+
+  let zip;
+  try {
+    zip = new AdmZip(zipPath);
+  } catch {
+    dialog.showErrorBox('Не получилось открыть архив', 'Файл повреждён или это не zip.');
+    return;
+  }
+
+  const byName = new Map();
+  for (const entry of zip.getEntries()) {
+    if (entry.isDirectory) continue;
+    byName.set(path.basename(entry.entryName).toLowerCase(), entry);
+  }
+
+  const missing = FRAME_NAMES.filter(n => !byName.has(`${n}.png`));
+  if (missing.length) {
+    dialog.showErrorBox('Не похоже на текстурпак', `В архиве не хватает файлов: ${missing.map(n => n + '.png').join(', ')}`);
+    return;
+  }
+
+  let name = path.basename(zipPath, path.extname(zipPath)).replace(/[^a-zA-Zа-яА-Я0-9_-]/g, '_') || 'pack';
+  let destDir = path.join(PACKS_DIR, name);
+  let i = 2;
+  while (fs.existsSync(destDir)) {
+    destDir = path.join(PACKS_DIR, `${name}_${i}`);
+    i++;
+  }
+  fs.mkdirSync(destDir, { recursive: true });
+  for (const n of FRAME_NAMES) {
+    fs.writeFileSync(path.join(destDir, `${n}.png`), byName.get(`${n}.png`).getData());
+  }
+
+  settings.activePack = path.basename(destDir);
+  saveSettings(settings);
+  if (win) win.reload();
+}
+
 function showContextMenu() {
   applyDecay();
   const menu = Menu.buildFromTemplate([
@@ -142,6 +217,33 @@ function showContextMenu() {
     { label: `С тобой уже ${daysSince(settings.bornAt)} дн.`, enabled: false },
     { label: `Поглажен ${settings.pets} раз`, enabled: false },
     { label: `Уронили ${settings.drops} раз`, enabled: false },
+    { type: 'separator' },
+    {
+      label: 'Текстурка',
+      submenu: [
+        {
+          label: 'Стандартная',
+          type: 'radio',
+          checked: settings.activePack === 'default',
+          click: () => { settings.activePack = 'default'; saveSettings(settings); if (win) win.reload(); }
+        },
+        ...Object.entries(BUILTIN_PACKS).map(([id, label]) => ({
+          label,
+          type: 'radio',
+          checked: settings.activePack === id,
+          click: () => { settings.activePack = id; saveSettings(settings); if (win) win.reload(); }
+        })),
+        ...(listPacks().length ? [{ type: 'separator' }] : []),
+        ...listPacks().map(name => ({
+          label: name,
+          type: 'radio',
+          checked: settings.activePack === name,
+          click: () => { settings.activePack = name; saveSettings(settings); if (win) win.reload(); }
+        })),
+        { type: 'separator' },
+        { label: 'Импортировать текстурпак...', click: () => importPack() }
+      ]
+    },
     { type: 'separator' },
     {
       label: 'Порог нытья про перерыв',
@@ -192,6 +294,7 @@ function pollCursor() {
 }
 
 app.whenReady().then(() => {
+  fs.mkdirSync(PACKS_DIR, { recursive: true });
   createWindow();
   setInterval(pollActivity, POLL_MS);
   setInterval(pollCursor, CURSOR_POLL_MS);
@@ -228,6 +331,7 @@ ipcMain.on('get-init', (e) => {
     petH: PET_H,
     x: b.x,
     y: b.y,
+    spritesPath: getSpritesPath(),
   };
 });
 

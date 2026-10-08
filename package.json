@@ -11,5 +11,8 @@
   },
   "allowScripts": {
     "electron@31.7.7": true
+  },
+  "dependencies": {
+    "adm-zip": "^0.6.1"
   }
 }

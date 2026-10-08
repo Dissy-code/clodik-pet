@@ -8,7 +8,7 @@ function loadFrames(done) {
   FRAME_NAMES.forEach(name => {
     const img = new Image();
     img.onload = () => { loadedCount++; if (loadedCount === FRAME_NAMES.length) done(); };
-    img.src = `assets/${name}.png`;
+    img.src = `file://${init.spritesPath}/${name}.png`;
     FRAMES[name] = img;
   });
 }
