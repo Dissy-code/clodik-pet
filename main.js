@@ -4,6 +4,8 @@ const fs = require('fs');
 const { exec } = require('child_process');
 const AdmZip = require('adm-zip');
 
+app.disableHardwareAcceleration();
+
 const STATE_PATH = path.join(app.getPath('userData'), 'settings.json');
 const PACKS_DIR = path.join(app.getPath('userData'), 'packs');
 const FRAME_NAMES = ['base', 'blink', 'tired', 'legs_a', 'legs_b'];
@@ -75,7 +77,7 @@ function positionBubbleWin() {
   const b = win.getBounds();
   bubbleWin.setPosition(
     Math.round(b.x + (PET_W - BUBBLE_W) / 2),
-    Math.round(b.y - BUBBLE_H + 20)
+    Math.round(b.y - BUBBLE_H + 42)
   );
 }
 
