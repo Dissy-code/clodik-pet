@@ -1,0 +1,65 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+  html, body {
+    margin: 0; padding: 0;
+    width: 100%; height: 100%;
+    background: transparent;
+    overflow: hidden;
+    user-select: none;
+  }
+  #stage {
+    position: relative;
+    width: 100%; height: 100%;
+  }
+  #bubble {
+    position: absolute;
+    left: 50%;
+    bottom: 22px;
+    transform: translateX(-50%);
+    background: #fff;
+    color: #2a2a2a;
+    font: 11px/1.3 monospace;
+    padding: 5px 8px;
+    border-radius: 8px;
+    border: 2px solid #2a2a2a;
+    white-space: normal;
+    max-width: 210px;
+    width: max-content;
+    text-align: center;
+    opacity: 0;
+    transition: opacity .2s;
+  }
+  #bubble.show { opacity: 1; }
+  #accessory {
+    position: absolute;
+    left: 50%;
+    bottom: 2px;
+    font: 14px/1 sans-serif;
+    white-space: nowrap;
+  }
+</style>
+</head>
+<body>
+  <div id="stage">
+    <div id="bubble"></div>
+    <div id="accessory"></div>
+  </div>
+  <script>
+    const { ipcRenderer } = require('electron');
+    const bubble = document.getElementById('bubble');
+    const accessory = document.getElementById('accessory');
+
+    ipcRenderer.on('bubble-update', (_e, { text, show, accessoryText, accessoryDy, accessoryOpacity }) => {
+      bubble.textContent = text || '';
+      bubble.classList.toggle('show', !!show);
+
+      accessory.textContent = accessoryText || '';
+      accessory.style.opacity = accessoryText ? String(accessoryOpacity) : '0';
+      accessory.style.transform = `translate(-50%, ${accessoryDy || 0}px)`;
+    });
+  </script>
+</body>
+</html>
