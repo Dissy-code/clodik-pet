@@ -20,6 +20,7 @@ const DEFAULTS = {
   happiness: 100,
   lastTickAt: Date.now(),
   activePack: 'default',
+  theme: 'light',
 };
 
 const HUNGER_FULL_DECAY_MS = 8 * 60 * 60 * 1000;
@@ -130,10 +131,17 @@ function createWindow() {
   bubbleWin.setAlwaysOnTop(true, 'screen-saver');
   bubbleWin.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
   bubbleWin.setTitle('ClodikPetBubble');
-  bubbleWin.webContents.on('did-finish-load', () => bubbleWin.setTitle('ClodikPetBubble'));
+  bubbleWin.webContents.on('did-finish-load', () => {
+    bubbleWin.setTitle('ClodikPetBubble');
+    bubbleWin.webContents.send('set-theme', settings.theme);
+  });
   bubbleWin.setIgnoreMouseEvents(true);
   bubbleWin.loadFile('bubble.html');
   positionBubbleWin();
+}
+
+function applyTheme() {
+  if (bubbleWin && !bubbleWin.isDestroyed()) bubbleWin.webContents.send('set-theme', settings.theme);
 }
 
 function reassertAlwaysOnTop() {
@@ -290,6 +298,23 @@ function showContextMenu() {
         checked: settings.nagSec === min * 60,
         click: () => { settings.nagSec = min * 60; settings.nagHardSec = min * 60 * 2; saveSettings(settings); }
       }))
+    },
+    {
+      label: 'Тема пузыря',
+      submenu: [
+        {
+          label: 'Светлая',
+          type: 'radio',
+          checked: settings.theme === 'light',
+          click: () => { settings.theme = 'light'; saveSettings(settings); applyTheme(); }
+        },
+        {
+          label: 'Тёмная',
+          type: 'radio',
+          checked: settings.theme === 'dark',
+          click: () => { settings.theme = 'dark'; saveSettings(settings); applyTheme(); }
+        }
+      ]
     },
     { type: 'separator' },
     { label: 'Выход', click: () => app.quit() }
@@ -450,6 +475,7 @@ ipcMain.on('get-init', (e) => {
     x: b.x,
     y: b.y,
     spritesPath: getSpritesPath(),
+    displays: screen.getAllDisplays().map(d => d.workArea),
   };
 });
 

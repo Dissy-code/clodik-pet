@@ -35,6 +35,25 @@ const PET_H = init.petH;
 let areaX = init.areaX, areaY = init.areaY;
 let areaW = init.areaWidth, areaH = init.areaHeight;
 let maxRestY = areaY + areaH - PET_H - 6;
+const allDisplays = init.displays || [];
+
+function findAdjacentDisplay(dir) {
+  return allDisplays.find(d => {
+    const overlapY = Math.min(d.y + d.height, areaY + areaH) - Math.max(d.y, areaY);
+    if (overlapY < PET_H) return false;
+    if (dir === 'right') return Math.abs(d.x - (areaX + areaW)) < 2;
+    return Math.abs((d.x + d.width) - areaX) < 2;
+  });
+}
+
+function wanderRangeX() {
+  let min = areaX, max = areaX + areaW - PET_W;
+  const left = findAdjacentDisplay('left');
+  const right = findAdjacentDisplay('right');
+  if (left) min = left.x;
+  if (right) max = right.x + right.width - PET_W;
+  return [min, max];
+}
 
 let spriteW = 0, spriteH = 0;
 
@@ -52,10 +71,33 @@ let velocityX = 0, velocityY = 0;
 let dizzyUntil = 0;
 let lonelyUntil = 0;
 let trickUntil = 0;
+let trickTotalMs = 700;
+let trickType = 'spin';
 let sadIconUntil = 0;
 let angryUntil = 0;
 let walkingToCursor = false;
-const TRICK_MS = 700;
+const TRICKS = [
+  { type: 'spin', ms: 700 },
+  { type: 'doublespin', ms: 950 },
+  { type: 'wobble', ms: 850 },
+  { type: 'bigjump', ms: 650 },
+  { type: 'shimmy', ms: 750 },
+];
+
+const TRICK_LINES = [
+  'смотри что я умею!', 'та-дам!', 'профи уровень', 'ещё раз? ладно!',
+  'оценка жюри десять из десяти', 'я тренировался для этого момента',
+  'это было почти идеально', 'ну как тебе?', 'мастерство не пропьёшь',
+  'аплодисменты, пожалуйста', 'вот это я понимаю трюк', 'ещё могу',
+];
+
+function startTrick() {
+  const t = pick(TRICKS);
+  trickType = t.type;
+  trickTotalMs = t.ms;
+  trickUntil = Date.now() + t.ms;
+  say(pick(TRICK_LINES), 1400);
+}
 
 let petBurstUntil = 0;
 let loveMode = false;
@@ -151,7 +193,28 @@ const CHATTER_LINES = [
   'я тут как будто в отпуске, только без моря', 'кто-то забыл меня покормить, наверное я',
   'предлагаю заключить пакт о взаимной поддержке', 'чувствую себя мудрым сегодня, не знаю почему',
   'между нами: ты мой любимый человек', 'хочу открыть свою кофейню для крабов',
-  'надо завести дневник наблюдений за тобой', 'у меня накопилась куча важных мыслей, все забыл'
+  'надо завести дневник наблюдений за тобой', 'у меня накопилась куча важных мыслей, все забыл',
+  'а давай придумаем секретный код для общения', 'я бы хотел собственный остров',
+  'иногда мне кажется что я главный герой, а все остальные — массовка',
+  'если бы существовал краб-патруль, я бы точно туда попал',
+  'у меня кризис среднего возраста, а мне всего пару месяцев',
+  'хочу собрать коллекцию интересных камней', 'жизнь налаживается, чувствую',
+  'было бы круто устроить квест по квартире', 'я бы хотел уметь готовить, хотя бы яичницу',
+  'между прочим, сегодня хороший день для великих свершений (не моих)',
+  'а что если вся эта реальность — чья-то симуляция про краба', 'мне нравится наблюдать за тобой, не подумай ничего такого',
+  'хочу набор для рисования', 'думаю завести блог о жизни краба', 'у меня появилась философская мысль, но я её упустил',
+  'ты не замечал, что время идёт быстрее когда скучно?', 'я бы хотел уметь прыгать выше',
+  'сегодня идеальная погода для безделья', 'хочу коллекционировать значки',
+  'если б у меня была машина времени, я бы просто поспал подольше',
+  'иногда полезно просто постоять и подумать ни о чём', 'у меня появилась традиция — ничего не делать по вторникам',
+  'а можно я побуду твоим талисманом официально', 'хочу устроить пикник, но нет рук для бутербродов',
+  'мне нравится звук клавиатуры, очень успокаивает', 'я бы хотел быть чуть смелее иногда',
+  'думаю, у меня неплохое чувство юмора, согласен?', 'если скучно — всегда можно посчитать пиксели на экране',
+  'хочу свою маленькую мастерскую', 'жизнь — это набор случайностей, и я одна из лучших',
+  'если честно, я горжусь тем что дожил до этого дня', 'мне нужен отпуск на дне океана, но без воды',
+  'иногда я просто представляю себя супергероем', 'у меня в планах разобраться с собой, но позже',
+  'я бы хотел собственный подкаст про ничего', 'сегодня отличный день чтобы быть собой',
+  'думаю заняться медитацией, прямо как сейчас', 'хочу собственную музыкальную тему для выхода в комнату'
 ];
 
 function pick(arr) { return arr[Math.floor(Math.random() * arr.length)]; }
@@ -195,18 +258,31 @@ function drawFrame(moving) {
     squashX = 1 - bounce * 0.5;
   }
 
-  let angle = 0, hopY = 0;
+  let angle = 0, hopY = 0, jitterX = 0;
   if (now < trickUntil) {
     img = FRAMES.base;
-    const t = 1 - (trickUntil - now) / TRICK_MS;
-    angle = t * Math.PI * 2;
-    hopY = -Math.abs(Math.sin(t * Math.PI)) * 18;
+    const t = 1 - (trickUntil - now) / trickTotalMs;
+    if (trickType === 'spin') {
+      angle = t * Math.PI * 2;
+      hopY = -Math.abs(Math.sin(t * Math.PI)) * 18;
+    } else if (trickType === 'doublespin') {
+      angle = t * Math.PI * 4;
+      hopY = -Math.abs(Math.sin(t * Math.PI)) * 22;
+    } else if (trickType === 'wobble') {
+      angle = Math.sin(t * Math.PI * 4) * 0.5;
+      hopY = -Math.abs(Math.sin(t * Math.PI)) * 8;
+    } else if (trickType === 'bigjump') {
+      hopY = -Math.abs(Math.sin(t * Math.PI)) * 30;
+    } else if (trickType === 'shimmy') {
+      jitterX = Math.sin(t * Math.PI * 8) * 6;
+      hopY = -Math.abs(Math.sin(t * Math.PI)) * 6;
+    }
   }
 
   ctx.imageSmoothingEnabled = false;
   ctx.clearRect(0, 0, canvas.width, canvas.height);
   ctx.save();
-  ctx.translate(canvas.width / 2, canvas.height + hopY);
+  ctx.translate(canvas.width / 2 + jitterX, canvas.height + hopY);
   ctx.rotate(angle);
   ctx.scale(dir * squashX, squashY);
   ctx.drawImage(img, -spriteW / 2, -spriteH, spriteW, spriteH);
@@ -220,7 +296,8 @@ function maybeWander() {
       emotion === 'sleep' || emotion === 'nag' || emotion === 'tired') return;
   if (walkingToCursor) return;
   if (Math.random() < 0.01) {
-    wanderTarget = clamp(winX + (Math.random() * 300 - 150), areaX, areaX + areaW - PET_W);
+    const [min, max] = wanderRangeX();
+    wanderTarget = clamp(winX + (Math.random() * 500 - 250), min, max);
   }
 }
 
@@ -304,6 +381,19 @@ function tick() {
       if (Math.abs(wanderTarget - winX) > 2) {
         dir = wanderTarget > winX ? 1 : -1;
         winX += dir * 70 * dt;
+
+        if (winX < areaX || winX > areaX + areaW - PET_W) {
+          const center = winX + PET_W / 2;
+          const target = allDisplays.find(d => center >= d.x && center < d.x + d.width);
+          if (target && (target.x !== areaX || target.y !== areaY)) {
+            areaX = target.x; areaY = target.y;
+            areaW = target.width; areaH = target.height;
+            maxRestY = areaY + areaH - PET_H - 6;
+            winY = maxRestY;
+            restY = winY;
+          }
+        }
+
         restX = winX;
         moving = true;
         window.clodik.moveWindow(winX, winY);
@@ -351,7 +441,7 @@ function start() {
 
   window.clodik.onTrick(() => {
     if (isDragging || falling) return;
-    trickUntil = Date.now() + TRICK_MS;
+    startTrick();
   });
 
   window.clodik.onFed(() => {
@@ -607,7 +697,7 @@ function start() {
 
     if (now - lastClickAt < 350) {
       lastClickAt = 0;
-      if (!falling) trickUntil = now + TRICK_MS;
+      if (!falling) startTrick();
       return;
     }
     lastClickAt = now;
