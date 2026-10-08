@@ -2,12 +2,24 @@ const SCALE = 1.25;
 
 const FRAMES = {};
 const FRAME_NAMES = ['base', 'blink', 'tired', 'legs_a', 'legs_b'];
+const OPTIONAL_FRAME_FALLBACK = { angry: 'tired', sad: 'tired', happy: 'base' };
 let loadedCount = 0;
 
 function loadFrames(done) {
+  const total = FRAME_NAMES.length + Object.keys(OPTIONAL_FRAME_FALLBACK).length;
+  const checkDone = () => { loadedCount++; if (loadedCount === total) done(); };
+
   FRAME_NAMES.forEach(name => {
     const img = new Image();
-    img.onload = () => { loadedCount++; if (loadedCount === FRAME_NAMES.length) done(); };
+    img.onload = checkDone;
+    img.src = `file://${init.spritesPath}/${name}.png`;
+    FRAMES[name] = img;
+  });
+
+  Object.entries(OPTIONAL_FRAME_FALLBACK).forEach(([name, fallback]) => {
+    const img = new Image();
+    img.onload = checkDone;
+    img.onerror = () => { FRAMES[name] = FRAMES[fallback]; checkDone(); };
     img.src = `file://${init.spritesPath}/${name}.png`;
     FRAMES[name] = img;
   });
@@ -39,9 +51,9 @@ let velocityX = 0, velocityY = 0;
 
 let dizzyUntil = 0;
 let lonelyUntil = 0;
-let waveUntil = 0;
 let trickUntil = 0;
-let eatingUntil = 0;
+let sadIconUntil = 0;
+let angryUntil = 0;
 let walkingToCursor = false;
 const TRICK_MS = 700;
 
@@ -128,7 +140,18 @@ const CHATTER_LINES = [
   'даже маленькая победа — победа', 'я рад быть рядом в хорошие и не очень дни',
   'ты заслуживаешь отдых не меньше, чем результат', 'что бы ни случилось, я на твоей стороне',
   'ты справился с большим, справишься и с этим', 'не вини себя за усталость, это нормально',
-  'сегодня тоже был шаг вперёд, даже если не заметно', 'ты важен не только за то, что делаешь'
+  'сегодня тоже был шаг вперёд, даже если не заметно', 'ты важен не только за то, что делаешь',
+  'о, кстати, я тут подумал...', 'а вообще, знаешь что', 'ладно забей, неважно',
+  'хочу себе персональный пляж', 'мне идёт этот цвет, да?', 'потестим удачу? орёл или решка',
+  'у меня сегодня вайб философский', 'я бы хотел уметь петь', 'а слабо станцевать со мной',
+  'иногда хочется просто покататься на скейте', 'не против, если я тут немного похожу',
+  'сделай потише свои мысли, я их слышу', 'я заметил новую пылинку на столе, важная находка',
+  'если долго сидеть неподвижно, становишься частью интерьера', 'у меня в планах — ничего, и это прекрасно',
+  'хочу коллекцию шляпок', 'как думаешь, крабы видят сны?', 'мне нужен отпуск, серьёзно',
+  'я тут как будто в отпуске, только без моря', 'кто-то забыл меня покормить, наверное я',
+  'предлагаю заключить пакт о взаимной поддержке', 'чувствую себя мудрым сегодня, не знаю почему',
+  'между нами: ты мой любимый человек', 'хочу открыть свою кофейню для крабов',
+  'надо завести дневник наблюдений за тобой', 'у меня накопилась куча важных мыслей, все забыл'
 ];
 
 function pick(arr) { return arr[Math.floor(Math.random() * arr.length)]; }
@@ -140,46 +163,22 @@ function clamp(v, a, b) { return Math.max(a, Math.min(b, v)); }
 
 function currentFrame(moving) {
   const now = Date.now();
+  if (now < angryUntil) return FRAMES.angry;
   if (moving) return Math.floor(now / 260) % 2 === 0 ? FRAMES.legs_a : FRAMES.legs_b;
   if (emotion === 'sleep') return FRAMES.blink;
   if (blinking) return FRAMES.blink;
-  if (now < lonelyUntil) return FRAMES.tired;
+  if (loveMode && now < petBurstUntil) return FRAMES.happy;
+  if (now < sadIconUntil || now < lonelyUntil) return FRAMES.sad;
   if (emotion === 'nag' || emotion === 'tired') return FRAMES.tired;
   return FRAMES.base;
 }
 
 function pushHud(now) {
-  let accessoryText = '';
-  let accessoryDy = 0;
-  let accessoryOpacity = 1;
-
-  if (now < dizzyUntil) {
-    accessoryText = '✦ ✧';
-    accessoryDy = Math.sin(now / 160) * 3;
-  } else if (now < eatingUntil) {
-    accessoryText = '🍪';
-    accessoryDy = Math.sin(now / 100) * 2;
-  } else if (now < waveUntil) {
-    accessoryText = '👋';
-    accessoryDy = -Math.abs(Math.sin(now / 150)) * 5;
-  } else if (emotion === 'sleep') {
-    accessoryText = 'z Z z';
-    accessoryDy = Math.sin(now / 420) * 3;
-  } else if (loveMode && now < petBurstUntil) {
-    const t = (now % 500) / 500;
-    accessoryText = '❤';
-    accessoryDy = -t * 16;
-    accessoryOpacity = 1 - t;
-  } else if (now < lonelyUntil) {
-    accessoryText = '...';
-  }
-
   const show = now < bubbleUntil;
-  const hud = { text: show ? currentBubbleText : '', show, accessoryText, accessoryDy, accessoryOpacity };
+  const hud = { text: show ? currentBubbleText : '', show };
 
-  const changed = !lastSentHud || lastSentHud.text !== hud.text ||
-    lastSentHud.show !== hud.show || lastSentHud.accessoryText !== hud.accessoryText;
-  if (changed || accessoryText) {
+  const changed = !lastSentHud || lastSentHud.text !== hud.text || lastSentHud.show !== hud.show;
+  if (changed) {
     window.clodik.updateBubble(hud);
   }
   lastSentHud = hud;
@@ -357,13 +356,21 @@ function start() {
 
   window.clodik.onFed(() => {
     const now = Date.now();
-    eatingUntil = now + 1200;
     petBurstUntil = now + 1200;
     registerInteraction();
     say(pick([
       'ммм, вкусно!', 'спасибо!', 'самое то', 'ещё бы кусочек',
       'наконец-то', 'объедение', 'то что доктор прописал'
     ]), 1500);
+  });
+
+  window.clodik.onRoam((area) => {
+    if (isDragging || falling) return;
+    migrateToArea(area, pick([
+      'пойду погуляю на другом экране', 'скучно тут, перейду-ка я',
+      'пойду проведаю второй монитор', 'сменю обстановку ненадолго',
+      'там тоже наверное интересно'
+    ]));
   });
 
   window.clodik.onCursor(({ cursor, cursorArea }) => {
@@ -424,6 +431,7 @@ function start() {
 
     if (settings.happiness < 25 && now > sadCooldownUntil && !isDragging && !falling) {
       sadCooldownUntil = now + randBetween([90000, 150000]);
+      sadIconUntil = now + 2800;
       lonelyUntil = now + 6000;
       say(pick([
         'мне грустновато последнее время', 'поиграй со мной, прошу',
@@ -435,7 +443,6 @@ function start() {
     if (idleSeconds >= WORRIED_IDLE_SEC && idleSeconds < settings.sleepIdleSec &&
         now > worriedCooldownUntil && !isDragging && !falling) {
       worriedCooldownUntil = now + randBetween(WORRIED_COOLDOWN_MS);
-      waveUntil = now + 2500;
       say(pick([
         'ты тут?', 'эй, заметь меня!', 'ау! я соскучился', 'ты где пропал?',
         'алло, живой там?', 'мышка, ну пошевелись', 'я волнуюсь вообще-то',
@@ -501,6 +508,8 @@ function start() {
   let dragWinStartX = 0, dragWinStartY = 0;
   let dragMoved = 0;
   let dragSamples = [];
+  let shookThisDrag = false;
+  let lastMoveSample = null;
 
   canvas.addEventListener('mousedown', (e) => {
     if (e.button !== 0) return;
@@ -511,7 +520,9 @@ function start() {
     dragWinStartX = winX;
     dragWinStartY = winY;
     dragMoved = 0;
-    dragSamples = [{ t: Date.now(), x: e.screenX, y: e.screenY }];
+    shookThisDrag = false;
+    lastMoveSample = { t: Date.now(), x: e.screenX, y: e.screenY };
+    dragSamples = [lastMoveSample];
     registerInteraction();
     say(pick([
       'опа, подняли!', 'держи крепче!', 'хи-хи, щекотно!',
@@ -534,7 +545,26 @@ function start() {
     winY = newY;
     window.clodik.moveWindow(winX, winY);
 
-    dragSamples.push({ t: Date.now(), x: e.screenX, y: e.screenY });
+    const now = Date.now();
+    if (lastMoveSample) {
+      const dt = Math.max(1, now - lastMoveSample.t);
+      const vx = (e.screenX - lastMoveSample.x) / dt;
+      const vy = (e.screenY - lastMoveSample.y) / dt;
+      if (Math.abs(vx) > SHAKE_PXMS || Math.abs(vy) > SHAKE_PXMS) {
+        angryUntil = now + 800;
+        if (!shookThisDrag) {
+          shookThisDrag = true;
+          say(pick([
+            'ай, не тряси!', 'укачаешь!', 'эй-эй, полегче!',
+            'бля, хватит трясти', 'меня щас стошнит', 'аккуратнее, дурак',
+            'пожалуйста, помедленнее', 'мне правда нехорошо так'
+          ]), 1500);
+        }
+      }
+    }
+    lastMoveSample = { t: now, x: e.screenX, y: e.screenY };
+
+    dragSamples.push({ t: now, x: e.screenX, y: e.screenY });
     if (dragSamples.length > 6) dragSamples.shift();
   });
 
@@ -553,21 +583,12 @@ function start() {
       vy = (b.y - a.y) / dt;
     }
 
-    const shaking = Math.abs(vx) > SHAKE_PXMS || Math.abs(vy) > SHAKE_PXMS;
-    if (shaking) {
-      say(pick([
-        'ай, не тряси!', 'укачаешь!', 'эй-эй, полегче!',
-        'бля, хватит трясти', 'меня щас стошнит', 'аккуратнее, дурак',
-        'пожалуйста, помедленнее', 'мне правда нехорошо так'
-      ]), 1500);
-    }
-
     if (winY < restY - 0.5) {
       startFall(vx * 1000, vy * 1000);
     } else {
       restX = winX;
       restY = winY;
-      if (!shaking) {
+      if (!shookThisDrag) {
         petBurstUntil = Date.now() + 900;
         say(pick([
           'поставили!', 'ещё разок?', ':3', 'вот тут хорошо', 'о, новое место',

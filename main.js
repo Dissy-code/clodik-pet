@@ -1,6 +1,7 @@
 const { app, BrowserWindow, Menu, ipcMain, screen, powerMonitor, dialog } = require('electron');
 const path = require('path');
 const fs = require('fs');
+const { exec } = require('child_process');
 const AdmZip = require('adm-zip');
 
 const STATE_PATH = path.join(app.getPath('userData'), 'settings.json');
@@ -105,6 +106,9 @@ function createWindow() {
 
   win.setAlwaysOnTop(true, 'screen-saver');
   win.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
+  win.setTitle('ClodikPet');
+  win.webContents.on('did-finish-load', () => win.setTitle('ClodikPet'));
+  win.on('show', () => reassertAlwaysOnTop());
   win.loadFile('index.html');
   win.webContents.on('context-menu', () => showContextMenu());
 
@@ -125,20 +129,44 @@ function createWindow() {
   });
   bubbleWin.setAlwaysOnTop(true, 'screen-saver');
   bubbleWin.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
+  bubbleWin.setTitle('ClodikPetBubble');
+  bubbleWin.webContents.on('did-finish-load', () => bubbleWin.setTitle('ClodikPetBubble'));
   bubbleWin.setIgnoreMouseEvents(true);
   bubbleWin.loadFile('bubble.html');
   positionBubbleWin();
+}
+
+function reassertAlwaysOnTop() {
+  if (win && !win.isDestroyed()) {
+    win.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
+    win.setAlwaysOnTop(true, 'screen-saver');
+  }
+  if (bubbleWin && !bubbleWin.isDestroyed()) {
+    bubbleWin.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
+    bubbleWin.setAlwaysOnTop(true, 'screen-saver');
+  }
 }
 
 function daysSince(ts) {
   return Math.max(0, Math.floor((Date.now() - ts) / (24 * 60 * 60 * 1000)));
 }
 
-const BUILTIN_PACKS = {
-  blue: 'Синий',
-  green: 'Зелёный',
-  purple: 'Фиолетовый',
+const BUILTIN_CATEGORIES = {
+  'Цвета': {
+    red: 'Красный',
+    yellow: 'Жёлтый',
+    green: 'Зелёный',
+    blue: 'Синий',
+    purple: 'Фиолетовый',
+    pink: 'Розовый',
+  },
+  'Темы': {
+    minecraft: 'Майнкрафт',
+    lava: 'Лава',
+    gold: 'Золото',
+  },
 };
+const BUILTIN_PACKS = Object.assign({}, ...Object.values(BUILTIN_CATEGORIES));
 
 function getSpritesPath() {
   if (settings.activePack === 'default') return path.join(__dirname, 'assets');
@@ -227,19 +255,28 @@ function showContextMenu() {
           checked: settings.activePack === 'default',
           click: () => { settings.activePack = 'default'; saveSettings(settings); if (win) win.reload(); }
         },
-        ...Object.entries(BUILTIN_PACKS).map(([id, label]) => ({
-          label,
-          type: 'radio',
-          checked: settings.activePack === id,
-          click: () => { settings.activePack = id; saveSettings(settings); if (win) win.reload(); }
+        { type: 'separator' },
+        ...Object.entries(BUILTIN_CATEGORIES).map(([category, packs]) => ({
+          label: category,
+          submenu: Object.entries(packs).map(([id, label]) => ({
+            label,
+            type: 'radio',
+            checked: settings.activePack === id,
+            click: () => { settings.activePack = id; saveSettings(settings); if (win) win.reload(); }
+          }))
         })),
-        ...(listPacks().length ? [{ type: 'separator' }] : []),
-        ...listPacks().map(name => ({
-          label: name,
-          type: 'radio',
-          checked: settings.activePack === name,
-          click: () => { settings.activePack = name; saveSettings(settings); if (win) win.reload(); }
-        })),
+        ...(listPacks().length ? [
+          { type: 'separator' },
+          {
+            label: 'Свои',
+            submenu: listPacks().map(name => ({
+              label: name,
+              type: 'radio',
+              checked: settings.activePack === name,
+              click: () => { settings.activePack = name; saveSettings(settings); if (win) win.reload(); }
+            }))
+          }
+        ] : []),
         { type: 'separator' },
         { label: 'Импортировать текстурпак...', click: () => importPack() }
       ]
@@ -293,11 +330,92 @@ function pollCursor() {
   win.webContents.send('cursor-state', { cursor, cursorArea: cursorDisplay.workArea });
 }
 
+const ROAM_POLL_MS = 15000;
+const ROAM_CHANCE = 0.08;
+function pollRoam() {
+  if (!win || win.isDestroyed()) return;
+  const displays = screen.getAllDisplays();
+  if (displays.length < 2) return;
+  if (Math.random() > ROAM_CHANCE) return;
+  const b = win.getBounds();
+  const current = screen.getDisplayNearestPoint({ x: b.x, y: b.y });
+  const others = displays.filter(d => d.id !== current.id);
+  if (!others.length) return;
+  const target = others[Math.floor(Math.random() * others.length)];
+  win.webContents.send('roam-to', target.workArea);
+}
+
+const WORKSPACE_POLL_MS = 1500;
+const WORKSPACE_CMDS = {
+  kwin: 'qdbus6 org.kde.KWin /VirtualDesktopManager org.freedesktop.DBus.Properties.Get org.kde.KWin.VirtualDesktopManager current',
+  xdotool: 'xdotool get_desktop',
+};
+
+let currentWorkspace = null;
+let workspacePollBusy = false;
+let workspaceToolFailures = 0;
+let workspaceMethod = null;
+let workspaceProbeStarted = false;
+
+function applyKwinSticky() {
+  const scriptPath = path.join(__dirname, 'kwin-sticky.js');
+  exec(`qdbus6 org.kde.KWin /Scripting loadScript "${scriptPath}" clodikPetSticky`, { timeout: 2000 }, (err, stdout) => {
+    if (err) return;
+    const id = stdout.trim();
+    if (!id) return;
+    exec(`qdbus6 org.kde.KWin /Scripting/Script${id} run`, { timeout: 2000 });
+  });
+}
+
+function probeWorkspaceMethod() {
+  workspaceProbeStarted = true;
+  exec(WORKSPACE_CMDS.kwin, { timeout: 1000 }, (err, stdout) => {
+    if (!err && stdout.trim()) {
+      workspaceMethod = 'kwin';
+      applyKwinSticky();
+      return;
+    }
+    exec(WORKSPACE_CMDS.xdotool, { timeout: 1000 }, (err2, stdout2) => {
+      if (!err2 && stdout2.trim()) workspaceMethod = 'xdotool';
+    });
+  });
+}
+
+function pollWorkspace() {
+  if (!win || win.isDestroyed()) return;
+  if (!workspaceProbeStarted) { probeWorkspaceMethod(); return; }
+  if (!workspaceMethod || workspacePollBusy || workspaceToolFailures >= 10) return;
+  workspacePollBusy = true;
+  exec(WORKSPACE_CMDS[workspaceMethod], { timeout: 1000 }, (err, stdout) => {
+    workspacePollBusy = false;
+    if (err) {
+      workspaceToolFailures++;
+      return;
+    }
+    workspaceToolFailures = 0;
+    const id = stdout.trim();
+    if (!id) return;
+    if (currentWorkspace === null) {
+      currentWorkspace = id;
+      return;
+    }
+    if (id !== currentWorkspace) {
+      currentWorkspace = id;
+      reassertAlwaysOnTop();
+      if (workspaceMethod === 'kwin') applyKwinSticky();
+      win.webContents.send('workspace-changed');
+    }
+  });
+}
+
 app.whenReady().then(() => {
   fs.mkdirSync(PACKS_DIR, { recursive: true });
   createWindow();
   setInterval(pollActivity, POLL_MS);
   setInterval(pollCursor, CURSOR_POLL_MS);
+  setInterval(pollRoam, ROAM_POLL_MS);
+  setInterval(pollWorkspace, WORKSPACE_POLL_MS);
+  setInterval(reassertAlwaysOnTop, 3000);
 });
 
 ipcMain.on('move-window', (e, { x, y }) => {
