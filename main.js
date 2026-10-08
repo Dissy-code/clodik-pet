@@ -1,4 +1,4 @@
-const { app, BrowserWindow, Menu, ipcMain, screen, powerMonitor, dialog } = require('electron');
+const { app, BrowserWindow, Menu, ipcMain, screen, powerMonitor, dialog, nativeTheme } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const { exec } = require('child_process');
@@ -141,6 +141,7 @@ function createWindow() {
 }
 
 function applyTheme() {
+  nativeTheme.themeSource = settings.theme === 'dark' ? 'dark' : settings.theme === 'light' ? 'light' : 'system';
   if (bubbleWin && !bubbleWin.isDestroyed()) bubbleWin.webContents.send('set-theme', settings.theme);
 }
 
@@ -300,7 +301,7 @@ function showContextMenu() {
       }))
     },
     {
-      label: 'Тема пузыря',
+      label: 'Тема',
       submenu: [
         {
           label: 'Светлая',
@@ -435,6 +436,7 @@ function pollWorkspace() {
 
 app.whenReady().then(() => {
   fs.mkdirSync(PACKS_DIR, { recursive: true });
+  nativeTheme.themeSource = settings.theme === 'dark' ? 'dark' : settings.theme === 'light' ? 'light' : 'system';
   createWindow();
   setInterval(pollActivity, POLL_MS);
   setInterval(pollCursor, CURSOR_POLL_MS);
